@@ -1,9 +1,10 @@
 const getEnvVariables = () => {
-    
+
     const organizationName = process.env.NEXT_PUBLIC_ORGANIZATION_NAME;
     const scope = process.env.NEXT_PUBLIC_SCOPE;
     const redirectUri = process.env.NEXT_PUBLIC_REDIRECT_URI;
     const clientId = process.env.NEXT_PUBLIC_CLIENT_ID;
+    const clientSecret = process.env.NEXT_PUBLIC_CLIENT_SECRET;
     const emailOtpAuthenticatorId = process.env.NEXT_PUBLIC_EMAIL_OTP_AUTHENTICATOR_ID;
 
     if (!organizationName || !scope || !clientId || !redirectUri || !emailOtpAuthenticatorId) {
@@ -15,6 +16,7 @@ const getEnvVariables = () => {
         scope,
         redirectUri,
         clientId,
+        clientSecret,
         emailOtpAuthenticatorId,
     };
 };
@@ -85,7 +87,7 @@ export const basicAuthentication = async (flowId: string, email: string, passwor
 
 export const initRequest = async (redirectUri: string) => {
 
-    const { organizationName, scope, clientId } = getEnvVariables();
+    const { organizationName, scope, clientId, clientSecret } = getEnvVariables();
 
     // Construct the OAuth2 authorization URL
     const authUrl = `https://api.asgardeo.io/t/${organizationName}/oauth2/authorize?` +
@@ -96,12 +98,16 @@ export const initRequest = async (redirectUri: string) => {
         `response_mode=direct`;
 
     try {
+        // Encode client ID and client secret in base64
+        const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+
         // Step 1: Get the authorization code from the initial OAuth2 authorization request
         const authorizeResponse = await fetch(authUrl, {
             method: "POST",
             headers: {
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Accept": "application/json",
+                "Authorization": `Basic ${credentials}`,
             },
         });
 
@@ -150,47 +156,50 @@ export const authenticateWithEmailOtp = async (flowId: string, emailOtp: string)
     }
 };
 
-export const fetchOAuth2Token = async ( authCode: string, redirectUri: string) => {
-    const { organizationName, clientId } = getEnvVariables();
+export const fetchOAuth2Token = async (authCode: string, redirectUri: string) => {
+    const { organizationName, clientId, clientSecret } = getEnvVariables();
     const tokenUrl = `https://api.asgardeo.io/t/${organizationName}/oauth2/token`;
     const tokenRequestBody = new URLSearchParams({
-      client_id: clientId,
-      code: authCode,
-      grant_type: "authorization_code",
-      redirect_uri: redirectUri,
+        client_id: clientId,
+        code: authCode,
+        grant_type: "authorization_code",
+        redirect_uri: redirectUri,
     });
-  
+
+    // Encode client ID and client secret in base64
+    const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+
     try {
-      const tokenResponse = await fetch(tokenUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: tokenRequestBody.toString(),
-      });
-  
-      const tokenData = await tokenResponse.json();
-      console.log("OAuth2 Token Data:", tokenData);
-  
-      if (tokenData.id_token) {
-        // Decode the ID token (JWT) to retrieve user details
-        const decodedToken = JSON.parse(Buffer.from(tokenData.id_token.split('.')[1], 'base64').toString());
-  
-        // Assuming the decoded JWT contains these fields
-        return {
-          id: decodedToken.sub,
-          name: decodedToken.name,
-          email: decodedToken.email,
-          given_name: decodedToken.given_name,
-          family_name: decodedToken.family_name,
-          id_token: tokenData.id_token, // Store the ID token for later use
-        };
-      }
-  
-      return null; // Flow incomplete or failed
+        const tokenResponse = await fetch(tokenUrl, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": `Basic ${credentials}`,
+            },
+            body: tokenRequestBody.toString(),
+        });
+
+        const tokenData = await tokenResponse.json();
+        console.log("OAuth2 Token Data:", tokenData);
+
+        if (tokenData.id_token) {
+            // Decode the ID token (JWT) to retrieve user details
+            const decodedToken = JSON.parse(Buffer.from(tokenData.id_token.split('.')[1], 'base64').toString());
+
+            // Assuming the decoded JWT contains these fields
+            return {
+                id: decodedToken.sub,
+                name: decodedToken.name,
+                email: decodedToken.email,
+                given_name: decodedToken.given_name,
+                family_name: decodedToken.family_name,
+                id_token: tokenData.id_token, // Store the ID token for later use
+            };
+        }
+
+        return null; // Flow incomplete or failed
     } catch (error) {
-      console.error("OAuth2 Authorization failed:", error);
-      throw new Error('OAuth2 Authorization failed');
+        console.error("OAuth2 Authorization failed:", error);
+        throw new Error('OAuth2 Authorization failed');
     }
-  };
-  
+};
